@@ -1,9 +1,10 @@
 package reactive2
 
-import akka.actor.{Actor, ActorRef, Props}
+import akka.actor.{Actor, ActorRef, Props, Timers}
 import akka.event.LoggingReceive
 
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.duration._
 
 class Item(name: String, price: Int) {
   //
@@ -25,19 +26,26 @@ object Cart {
 
   case class CheckoutCreated(checkout: ActorRef)
 
+  case object CartTimerKey
+
 }
 
-class Cart extends Actor {
+class Cart extends Actor with Timers {
 
   import Cart._
 
   val items: ListBuffer[Item] = ListBuffer[Item]()
   var checkoutActor: ActorRef = _
 
+  def changeContextToNonEmpty(): Unit = {
+    context become nonEmpty
+    timers.startSingleTimer(CartTimerKey, CartTimerExpired, 5 second)
+  }
+
   def empty: Receive = LoggingReceive {
     case ItemAdded(item) =>
       items += item
-      context become nonEmpty
+      changeContextToNonEmpty()
   }
 
   def nonEmpty: Receive = LoggingReceive {
@@ -66,7 +74,7 @@ class Cart extends Actor {
       context become empty
 
     case CheckoutCancelled =>
-      context become nonEmpty
+      changeContextToNonEmpty()
   }
 
   def receive: Receive = empty
