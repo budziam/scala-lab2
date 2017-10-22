@@ -1,7 +1,6 @@
 package reactive2
 
-import akka.actor.{Actor, ActorRef, Props, Timers}
-import akka.event.LoggingReceive
+import akka.actor.{ActorRef, FSM, Props}
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
@@ -10,72 +9,71 @@ class Item(name: String, price: Int) {
   //
 }
 
-object Cart {
+final case class ItemAdded(item: Item)
 
-  case class ItemAdded(item: Item)
+final case class ItemRemoved(item: Item)
 
-  case class ItemRemoved(item: Item)
+final case class CheckoutCreated(checkout: ActorRef)
 
-  case class CheckoutStarted()
+case object CheckoutStarted
 
-  case class CheckoutCancelled()
+case object CheckoutClosed
 
-  case class CheckoutClosed()
+case object CheckoutCancelled
 
-  case class CartTimerExpired()
 
-  case class CheckoutCreated(checkout: ActorRef)
+sealed trait CartState
 
-  case object CartTimerKey
+case object Empty extends CartState
 
-}
+case object NonEmpty extends CartState
 
-class Cart extends Actor with Timers {
+case object InCheckout extends CartState
 
-  import Cart._
 
-  val items: ListBuffer[Item] = ListBuffer[Item]()
-  var checkoutActor: ActorRef = _
+sealed trait CartData
 
-  def changeContextToNonEmpty(): Unit = {
-    context become nonEmpty
-    timers.startSingleTimer(CartTimerKey, CartTimerExpired, 5 second)
+case object None extends CartData
+
+final case class ItemStore(checkout: ActorRef, items: ListBuffer[Item]) extends CartData
+
+class Cart extends FSM[CartState, CartData] {
+
+  startWith(Empty, None)
+
+  when(Empty) {
+    case Event(ItemAdded(item), None) =>
+      goto(NonEmpty) using ItemStore(null, ListBuffer(item))
   }
 
-  def empty: Receive = LoggingReceive {
-    case ItemAdded(item) =>
+  when(NonEmpty, stateTimeout = 5 seconds) {
+    case Event(ItemAdded(item), ItemStore(_, items)) =>
       items += item
-      changeContextToNonEmpty()
-  }
+      stay using ItemStore(null, items)
 
-  def nonEmpty: Receive = LoggingReceive {
-    case ItemAdded(item) =>
-      items += item
-
-    case ItemRemoved(item) if items.size > 1 =>
+    case Event(ItemRemoved(item), ItemStore(_, items)) if items.length > 1 =>
       items -= item
+      stay using ItemStore(null, items)
 
-    case ItemRemoved(item) if items.size == 1 =>
-      items -= item
-      context become empty
+    case Event(ItemRemoved(_), ItemStore(_, items)) if items.length == 1 =>
+      goto(Empty) using None
 
-    case CheckoutStarted =>
-      checkoutActor = context.actorOf(Props(new Checkout(self)), "checkout")
+    case Event(CheckoutStarted, ItemStore(_, items)) =>
+      val checkoutActor = context.actorOf(Props(new Checkout(self)), "checkout")
       sender ! CheckoutCreated(checkoutActor)
-      context become inCheckout
+      goto(InCheckout) using ItemStore(checkoutActor, items)
 
-    case CartTimerExpired =>
-      context become empty
+    case Event(StateTimeout, _) =>
+      goto(Empty) using None
   }
 
-  def inCheckout: Receive = LoggingReceive {
-    case CheckoutClosed =>
-      items.clear()
-      context become empty
+  when(InCheckout) {
+    case Event(CheckoutCancelled, store: ItemStore) =>
+      goto(NonEmpty) using store
 
-    case CheckoutCancelled =>
-      changeContextToNonEmpty()
+    case Event(CheckoutClosed, _) =>
+      goto(Empty) using None
   }
 
-  def receive: Receive = empty
+  initialize()
 }

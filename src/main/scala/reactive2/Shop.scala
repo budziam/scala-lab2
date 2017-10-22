@@ -20,13 +20,13 @@ class Shop extends Actor {
       val grass2 = new Item("grass", 10)
       val grass3 = new Item("grass", 10)
 
-      cart ! Cart.ItemAdded(grass1)
-      cart ! Cart.ItemAdded(grass2)
-      cart ! Cart.ItemAdded(grass3)
-      cart ! Cart.ItemRemoved(grass1)
-      cart ! Cart.CheckoutStarted
+      cart ! ItemAdded(grass1)
+      cart ! ItemAdded(grass2)
+      cart ! ItemAdded(grass3)
+      cart ! ItemRemoved(grass1)
+      cart ! CheckoutStarted
 
-    case Cart.CheckoutCreated(checkout) =>
+    case CheckoutCreated(checkout) =>
       checkout ! Checkout.DeliveryMethodSelected
       checkout ! Checkout.PaymentSelected
       checkout ! Checkout.PaymentReceived

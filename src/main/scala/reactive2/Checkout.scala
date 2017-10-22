@@ -36,7 +36,7 @@ class Checkout(cart: ActorRef) extends Actor with Timers {
   timers.startSingleTimer(CheckoutTimerKey, CheckoutTimerExpired, 5 second)
 
   def cancellCheckout(): Unit = {
-    cart ! Cart.CheckoutCancelled
+    cart ! CheckoutCancelled
     context.stop(self)
   }
 
@@ -59,7 +59,7 @@ class Checkout(cart: ActorRef) extends Actor with Timers {
     case PaymentTimerExpired => cancellCheckout()
 
     case PaymentReceived =>
-      cart ! Cart.CheckoutClosed
+      cart ! CheckoutClosed
       context.stop(self)
   }
 
