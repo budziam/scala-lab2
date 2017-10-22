@@ -27,9 +27,9 @@ class Shop extends Actor {
       cart ! CheckoutStarted
 
     case CheckoutCreated(checkout) =>
-      checkout ! Checkout.DeliveryMethodSelected
-      checkout ! Checkout.PaymentSelected
-      checkout ! Checkout.PaymentReceived
+      checkout ! DeliveryMethodSelected
+      checkout ! PaymentSelected
+      checkout ! PaymentReceived
   }
 }
 

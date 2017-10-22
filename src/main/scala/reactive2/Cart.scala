@@ -33,16 +33,16 @@ case object InCheckout extends CartState
 
 sealed trait CartData
 
-case object None extends CartData
+case object CartNone extends CartData
 
 final case class ItemStore(checkout: ActorRef, items: ListBuffer[Item]) extends CartData
 
 class Cart extends FSM[CartState, CartData] {
 
-  startWith(Empty, None)
+  startWith(Empty, CartNone)
 
   when(Empty) {
-    case Event(ItemAdded(item), None) =>
+    case Event(ItemAdded(item), CartNone) =>
       goto(NonEmpty) using ItemStore(null, ListBuffer(item))
   }
 
@@ -56,7 +56,7 @@ class Cart extends FSM[CartState, CartData] {
       stay using ItemStore(null, items)
 
     case Event(ItemRemoved(_), ItemStore(_, items)) if items.length == 1 =>
-      goto(Empty) using None
+      goto(Empty) using CartNone
 
     case Event(CheckoutStarted, ItemStore(_, items)) =>
       val checkoutActor = context.actorOf(Props(new Checkout(self)), "checkout")
@@ -64,7 +64,7 @@ class Cart extends FSM[CartState, CartData] {
       goto(InCheckout) using ItemStore(checkoutActor, items)
 
     case Event(StateTimeout, _) =>
-      goto(Empty) using None
+      goto(Empty) using CartNone
   }
 
   when(InCheckout) {
@@ -72,7 +72,7 @@ class Cart extends FSM[CartState, CartData] {
       goto(NonEmpty) using store
 
     case Event(CheckoutClosed, _) =>
-      goto(Empty) using None
+      goto(Empty) using CartNone
   }
 
   initialize()

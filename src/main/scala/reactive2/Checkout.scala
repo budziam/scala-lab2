@@ -1,67 +1,79 @@
 package reactive2
 
-import akka.actor.{Actor, ActorRef, Timers}
-import akka.event.LoggingReceive
+import akka.actor.{ActorRef, FSM}
 
 import scala.concurrent.duration._
 
-object Checkout {
+case object DeliveryMethodSelected
 
-  case class CheckoutStarted()
+case object Cancelled
 
-  case class CheckoutTimerExpired()
+case object CheckoutTimerExpired
 
-  case class DeliveryMethodSelected()
+case object PaymentTimerExpired
 
-  case class Cancelled()
+case object PaymentSelected
 
-  case class CartTimerExpired()
+case object PaymentReceived
 
-  case class PaymentSelected()
 
-  case class PaymentReceived()
+sealed trait CheckoutState
 
-  case class PaymentTimerExpired()
+case object ProcessingPayment extends CheckoutState
 
-  case object CheckoutTimerKey
+case object SelectingPaymentMethod extends CheckoutState
 
-  case object PaymentTimerKey
+case object SelectingDelivery extends CheckoutState
 
-}
 
-class Checkout(cart: ActorRef) extends Actor with Timers {
+sealed trait CheckoutData
 
-  import Checkout._
+case object CheckoutUninitialized extends CheckoutData
 
-  timers.startSingleTimer(CheckoutTimerKey, CheckoutTimerExpired, 5 second)
+case class CheckoutInfo() extends CheckoutData
 
-  def cancellCheckout(): Unit = {
-    cart ! CheckoutCancelled
-    context.stop(self)
+
+class Checkout(cart: ActorRef) extends FSM[CheckoutState, CheckoutData] {
+
+  startWith(SelectingDelivery, CheckoutUninitialized)
+
+  when(SelectingDelivery) {
+    case Event(DeliveryMethodSelected, CheckoutUninitialized) =>
+      goto(SelectingPaymentMethod) using CheckoutInfo()
   }
 
-  def selectingDelivery: Receive = LoggingReceive {
-    case Cancelled => cancellCheckout()
-    case CheckoutTimerExpired => cancellCheckout()
-    case DeliveryMethodSelected => context become selectingPaymentMethod
+  when(SelectingPaymentMethod) {
+    case Event(PaymentSelected, CheckoutInfo()) =>
+      goto(ProcessingPayment) using CheckoutInfo()
   }
 
-  def selectingPaymentMethod: Receive = LoggingReceive {
-    case Cancelled => cancellCheckout()
-    case CheckoutTimerExpired => cancellCheckout()
-    case PaymentSelected =>
-      timers.startSingleTimer(PaymentTimerKey, PaymentTimerExpired, 5 second)
-      context become processingPayment
-  }
-
-  def processingPayment: Receive = LoggingReceive {
-    case Cancelled => cancellCheckout()
-    case PaymentTimerExpired => cancellCheckout()
-
-    case PaymentReceived =>
+  when(ProcessingPayment) {
+    case Event(PaymentReceived, _: CheckoutInfo) =>
       cart ! CheckoutClosed
-      context.stop(self)
+      stop()
+
+    case Event(PaymentTimerExpired, _) =>
+      cart ! CheckoutCancelled
+      stop()
+
   }
 
-  def receive: Receive = selectingDelivery
+  whenUnhandled {
+    case Event(Cancelled, _) =>
+      cart ! CheckoutCancelled
+      stop()
+
+    case Event(CheckoutTimerExpired, _) =>
+      cart ! CheckoutCancelled
+      stop()
+  }
+
+  onTransition {
+    case _ -> SelectingDelivery => setTimer("checkoutTimer", CheckoutTimerExpired, 3 seconds)
+    case SelectingPaymentMethod -> ProcessingPayment =>
+      cancelTimer("checkoutTimer")
+      setTimer("paymentTimer", PaymentTimerExpired, 3 seconds)
+  }
+
+  initialize()
 }
