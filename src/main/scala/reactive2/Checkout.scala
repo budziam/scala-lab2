@@ -1,6 +1,6 @@
 package reactive2
 
-import akka.actor.{Actor, ActorRef, Timers}
+import akka.actor.{Actor, ActorRef, Props, Timers}
 import akka.event.LoggingReceive
 
 import scala.concurrent.duration._
@@ -19,9 +19,9 @@ object Checkout {
 
   case class PaymentSelected()
 
-  case class PaymentReceived()
-
   case class PaymentTimerExpired()
+
+  case class PaymentServiceStarted(paymentService: ActorRef)
 
   case object CheckoutTimerKey
 
@@ -29,37 +29,42 @@ object Checkout {
 
 }
 
-class Checkout(cart: ActorRef) extends Actor with Timers {
+class Checkout(customer: ActorRef, cart: ActorRef) extends Actor with Timers {
 
   import Checkout._
 
   timers.startSingleTimer(CheckoutTimerKey, CheckoutTimerExpired, 5 second)
 
   def cancellCheckout(): Unit = {
-    cart ! Cart.CheckoutCancelled
+    cart ! Cart.CheckoutCancelled()
     context.stop(self)
   }
 
   def selectingDelivery: Receive = LoggingReceive {
-    case Cancelled => cancellCheckout()
-    case CheckoutTimerExpired => cancellCheckout()
-    case DeliveryMethodSelected => context become selectingPaymentMethod
+    case Cancelled() => cancellCheckout()
+    case CheckoutTimerExpired() => cancellCheckout()
+    case DeliveryMethodSelected() => context become selectingPaymentMethod
   }
 
   def selectingPaymentMethod: Receive = LoggingReceive {
-    case Cancelled => cancellCheckout()
-    case CheckoutTimerExpired => cancellCheckout()
-    case PaymentSelected =>
+    case Cancelled() => cancellCheckout()
+    case CheckoutTimerExpired() => cancellCheckout()
+    case PaymentSelected() =>
       timers.startSingleTimer(PaymentTimerKey, PaymentTimerExpired, 5 second)
+
+      val paymentService = context.actorOf(Props(new PaymentService(self)), "paymentService")
+      customer ! PaymentServiceStarted(paymentService)
+
       context become processingPayment
   }
 
   def processingPayment: Receive = LoggingReceive {
-    case Cancelled => cancellCheckout()
-    case PaymentTimerExpired => cancellCheckout()
+    case Cancelled() => cancellCheckout()
+    case PaymentTimerExpired() => cancellCheckout()
 
-    case PaymentReceived =>
-      cart ! Cart.CheckoutClosed
+    case PaymentService.PaymentReceived() =>
+      customer ! Cart.CheckoutClosed()
+      cart ! Cart.CheckoutClosed()
       context.stop(self)
   }
 
