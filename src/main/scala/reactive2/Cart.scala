@@ -58,12 +58,16 @@ class Cart(customer: ActorRef) extends Actor with Timers {
       changeContextToEmpty()
 
     case StartCheckOut() =>
-      val checkoutActor = context.actorOf(Props(new Checkout(customer, self)), "checkout")
+      val checkoutActor = createCheckoutActor()
       sender ! CheckOutStarted(checkoutActor)
       context become inCheckout
 
     case CartTimerExpired() =>
       changeContextToEmpty()
+  }
+
+  def createCheckoutActor(): ActorRef = {
+    context.actorOf(Props(new Checkout(customer, self)), "checkout")
   }
 
   def inCheckout: Receive = LoggingReceive {
