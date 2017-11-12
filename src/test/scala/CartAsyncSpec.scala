@@ -1,8 +1,10 @@
 
+import java.net.URI
+
 import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.testkit.{ImplicitSender, TestKit, TestProbe}
 import org.scalatest.{BeforeAndAfterAll, WordSpecLike}
-import reactive2.{Cart, Item}
+import reactive2.{CartManager, Item}
 
 class CartAsyncSpec extends TestKit(ActorSystem("CartAsyncSpec"))
   with WordSpecLike with BeforeAndAfterAll with ImplicitSender {
@@ -17,19 +19,19 @@ class CartAsyncSpec extends TestKit(ActorSystem("CartAsyncSpec"))
 
   def setUp(): Unit = {
     customer = TestProbe()
-    cart = system.actorOf(Props(new Cart(customer.ref) {
+    cart = system.actorOf(Props(new CartManager(customer.ref) {
       override def createCheckoutActor(): ActorRef = super.createCheckoutActor()
     }))
-    grass = new Item("grass", 10)
+    grass = Item(URI.create("1"), "grass", 10, 1)
   }
 
   "A cart" must {
     "starts checkout when is not empty and someone wants to start checkout" in {
-      import Cart._
+      import CartManager._
       setUp()
 
       val checkout = TestProbe().ref
-      cart = system.actorOf(Props(new Cart(customer.ref) {
+      cart = system.actorOf(Props(new CartManager(customer.ref) {
         override def createCheckoutActor(): ActorRef = checkout
       }))
 
@@ -39,16 +41,16 @@ class CartAsyncSpec extends TestKit(ActorSystem("CartAsyncSpec"))
     }
 
     "inform about empty items when last item is removed" in {
-      import Cart._
+      import CartManager._
       setUp()
 
       cart ! AddItem(grass)
-      cart ! RemoveItem(grass)
+      cart ! RemoveItem(grass, 1)
       customer.expectMsg(CartEmpty())
     }
 
     "inform about empty items when cart timer expired" in {
-      import Cart._
+      import CartManager._
       setUp()
 
       cart ! AddItem(grass)
@@ -57,7 +59,7 @@ class CartAsyncSpec extends TestKit(ActorSystem("CartAsyncSpec"))
     }
 
     "inform about empty items when checkout has closed" in {
-      import Cart._
+      import CartManager._
       setUp()
 
       cart ! AddItem(grass)
