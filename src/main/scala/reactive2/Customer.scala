@@ -24,7 +24,7 @@ class Customer extends Actor {
       cart ! CartManager.AddItem(soap)
       cart ! CartManager.AddItem(beer)
       cart ! CartManager.RemoveItem(grass, 1)
-      cart ! CartManager.StartCheckOut()
+      cart ! CartManager.StartCheckOut
 
     case CartManager.CheckOutStarted(checkout) =>
       checkout ! Checkout.DeliveryMethodSelected()
@@ -33,8 +33,8 @@ class Customer extends Actor {
     case Checkout.PaymentServiceStarted(paymentService) =>
       paymentService ! PaymentService.DoPayment()
 
-    case CartManager.CartEmpty() => println("[INFO] Oh no! Cart is empty")
-    case CartManager.CheckoutClosed() => println("[INFO] Oh no! Checkout is closed")
+    case CartManager.CartEmpty => println("[INFO] Oh no! Cart is empty")
+    case CartManager.CheckoutClosed => println("[INFO] Oh no! Checkout is closed")
     case PaymentService.PaymentConfirmed() => println("[INFO] Oh yeah! Payment is confirmed")
   }
 }

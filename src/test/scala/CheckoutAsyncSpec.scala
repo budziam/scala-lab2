@@ -23,7 +23,7 @@ class CheckoutAsyncSpec extends TestKit(ActorSystem("CheckoutAsyncSpec"))
       checkout ! DeliveryMethodSelected()
       checkout ! PaymentSelected()
       checkout ! PaymentReceived()
-      cart.expectMsg(CheckoutClosed())
+      cart.expectMsg(CheckoutClosed)
     }
   }
 }

@@ -1,161 +1,144 @@
 package reactive2
 
-import java.net.URI
-
 import akka.actor.{ActorRef, Props, Timers}
 import akka.event.LoggingReceive
 import akka.persistence._
 
 import scala.concurrent.duration._
 
-case class Item(id: URI, name: String, price: BigDecimal, count: Int)
-
-object Cart {
-  val empty = Cart(Map.empty)
-}
-
-case class Cart(items: Map[URI, Item]) {
-  def addItem(item: Item): Cart = {
-    copy(items = items.updated(item.id, item.copy(count = getItemCount(item) + item.count)))
-  }
-
-  def removeItem(item: Item, count: Int): Cart = {
-    val itemCount = getItemCount(item)
-    if (itemCount <= count) {
-      return copy(items = items - item.id)
-    }
-
-    copy(items = items.updated(item.id, item.copy(count = itemCount - count)))
-  }
-
-  private def getItemCount(it: Item): Int = {
-    if (items contains it.id) items(it.id).count else 0
-  }
-}
-
 object CartManager {
 
-  case class AddItem(item: Item)
-
-  case class RemoveItem(item: Item, count: Int)
-
-  case class StartCheckOut()
-
-  case class CheckoutCancelled()
-
-  case class CheckoutClosed()
-
-  case class CartTimerExpired()
+  case object StartCheckOut
 
   case class CheckOutStarted(checkout: ActorRef)
 
-  case class CartEmpty()
+  case object CheckoutCancelled
 
-  case object CartTimerKey
+  case object CheckoutClosed
 
-  case object Snap
+  case object CartTimerExpired
+
+  case object CartEmpty
+
+  sealed trait CartState
+
+  case object Empty extends CartState
+
+  case class NonEmpty(timestamp: Long) extends CartState
+
+  case object InCheckout extends CartState
+
+  sealed trait Event
+
+  case class AddItem(item: Item) extends Event
+
+  case class RemoveItem(item: Item, count: Int) extends Event
+
+  case object ClearCart extends Event
+
+  private case class ChangeState(state: CartState) extends Event
 
 }
 
-class CartManager(customer: ActorRef) extends PersistentActor with Timers {
+class CartManager(customer: ActorRef, id: String, var cart: Cart) extends PersistentActor with Timers {
 
   import CartManager._
 
-  override def persistenceId = "cart-1"
+  override def persistenceId: String = id
 
-  var cart: Cart = Cart.empty
+  val cartTimeout: FiniteDuration = 60 seconds
 
-  def receiveCommand: Receive = empty
+  def this(customer: ActorRef) = {
+    this(customer, "cart-manager-1", Cart.empty)
+  }
 
-  val receiveRecover: Receive = {
-    case AddItem(item: Item) =>
-      cart = cart.addItem(item)
-      changeContextToNonEmpty()
+  def this(customer: ActorRef, id: String) = {
+    this(customer, id, Cart.empty)
+  }
 
-    case SnapshotOffer(_, snapshot: Cart) => cart = snapshot
+  private def startTimer(timestamp: Long, time: FiniteDuration): Unit = {
+    timers.startSingleTimer("cart-manager-timer-" + timestamp, CartTimerExpired, time)
+  }
+
+  private def cancelTimer(): Unit = {
+    timers.cancelAll()
   }
 
   def empty: Receive = LoggingReceive {
     case AddItem(item: Item) =>
-      cart = cart.addItem(item)
-      changeContextToNonEmpty()
-
-    case Snap => saveSnapshot(cart)
+      persist(AddItem(item: Item)) { event =>
+        updateState(event)
+        changeContextToNonEmpty()
+      }
   }
 
   def nonEmpty: Receive = LoggingReceive {
-    case AddItem(item: Item) =>
-      cart = cart.addItem(item)
+    case ClearCart => changeContextToEmpty()
 
-    case RemoveItem(item: Item, count: Int) if cart.items.size > 1 =>
-      cart = cart.removeItem(item, count)
+    case AddItem(item) =>
+      persist(AddItem(item)) { event =>
+        updateState(event)
+      }
 
-    case RemoveItem(item, count: Int) if cart.items.size == 1 =>
-      cart = cart.removeItem(item, count)
-      changeContextToEmpty()
+    case RemoveItem(item, count) if cart.items contains item.id =>
+      persist(RemoveItem(item, count)) { event =>
+        updateState(event)
+        if (cart.items.isEmpty) changeContextToEmpty()
+      }
 
-    case StartCheckOut() =>
+    case StartCheckOut =>
       val checkoutActor = createCheckoutActor()
       sender ! CheckOutStarted(checkoutActor)
-      context become inCheckout
+      persist(ChangeState(InCheckout)) { event => updateState(event) }
 
-    case CartTimerExpired() => changeContextToEmpty()
-
-    case Snap => saveSnapshot(cart)
+    case CartTimerExpired => changeContextToEmpty()
   }
 
   def inCheckout: Receive = LoggingReceive {
-    case CheckoutClosed() =>
-      cart = Cart.empty
-      changeContextToEmpty();
+    case CheckoutClosed => changeContextToEmpty();
+    case CheckoutCancelled => changeContextToNonEmpty()
+  }
 
-    case CheckoutCancelled() => changeContextToNonEmpty()
-
-    case Snap => saveSnapshot(cart)
+  private def updateState(event: Event): Unit = event match {
+    case ClearCart => cart = Cart.empty
+    case AddItem(item) => cart = cart.addItem(item)
+    case RemoveItem(item, count) => cart = cart.removeItem(item, count)
+    case ChangeState(state) => state match {
+      case Empty =>
+        cancelTimer()
+        context become empty
+      case NonEmpty(timestamp) =>
+        val now = System.currentTimeMillis()
+        val diff = Math.max((now - timestamp) / 1000.0, 0)
+        startTimer(timestamp, cartTimeout - diff.seconds)
+        context become nonEmpty
+      case InCheckout =>
+        cancelTimer()
+        context become inCheckout
+    }
   }
 
   def createCheckoutActor(): ActorRef = {
     context.actorOf(Props(new Checkout(customer, self)), "checkout")
   }
 
-  private def changeContextToNonEmpty(): Unit = {
-    timers.startSingleTimer(CartTimerKey, CartTimerExpired, 5 second)
-    context become nonEmpty
+  private def changeContextToEmpty(): Unit = {
+    persist(ClearCart) { event =>
+      updateState(event)
+      customer ! CartEmpty
+      persist(ChangeState(Empty)) { event => updateState(event) }
+    }
   }
 
-  private def changeContextToEmpty(): Unit = {
-    customer ! CartEmpty()
-    context become empty
+  private def changeContextToNonEmpty(): Unit = {
+    val now = System.currentTimeMillis()
+    persist(ChangeState(NonEmpty(now))) { event => updateState(event) }
+  }
+
+  override def receiveCommand: Receive = empty
+
+  override def receiveRecover: Receive = LoggingReceive {
+    case event: Event => updateState(event)
+    case SnapshotOffer(_, snapshot: Cart) => cart = snapshot
   }
 }
-
-///**
-//  * @param id: unique item identifier (java.net.URI)
-//  */
-//case class Item(id: URI, name: String, price: BigDecimal, count: Int)
-//case class Cart(items: Map[URI, Item]) {
-//  def addItem(it: Item): Cart = {
-//    val currentCount = if (items contains it.id) items(it.id).count else 0
-//    copy(items = items.updated(it.id, it.copy(count = currentCount + it.count)))
-//  }
-//  def removeItem(id: Item, cnt: Int) = {
-//
-//  }
-//}
-//
-//object Cart {
-//  val empty = Cart(Map.empty)
-//}
-//
-//class CartManager(var shoppingCart: Cart) extends Actor {
-//  def this() = this(Cart.empty)
-//
-//  def receive = {
-//    case AddItem(item, count) => {
-//
-//    }
-//    case RemoveItem(item, count) => {
-//
-//    }
-//  }
-//}

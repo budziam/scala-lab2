@@ -10,7 +10,7 @@ class CartAsyncSpec extends TestKit(ActorSystem("CartAsyncSpec"))
   with WordSpecLike with BeforeAndAfterAll with ImplicitSender {
 
   var customer: TestProbe = _
-  var cart: ActorRef = _
+  var cartManager: ActorRef = _
   var grass: Item = _
 
   override def afterAll(): Unit = {
@@ -19,9 +19,7 @@ class CartAsyncSpec extends TestKit(ActorSystem("CartAsyncSpec"))
 
   def setUp(): Unit = {
     customer = TestProbe()
-    cart = system.actorOf(Props(new CartManager(customer.ref) {
-      override def createCheckoutActor(): ActorRef = super.createCheckoutActor()
-    }))
+    cartManager = system.actorOf(Props(new CartManager(customer.ref, String.valueOf(System.currentTimeMillis()))))
     grass = Item(URI.create("1"), "grass", 10, 1)
   }
 
@@ -31,12 +29,12 @@ class CartAsyncSpec extends TestKit(ActorSystem("CartAsyncSpec"))
       setUp()
 
       val checkout = TestProbe().ref
-      cart = system.actorOf(Props(new CartManager(customer.ref) {
+      cartManager = system.actorOf(Props(new CartManager(customer.ref) {
         override def createCheckoutActor(): ActorRef = checkout
       }))
 
-      cart ! AddItem(grass)
-      cart ! StartCheckOut()
+      cartManager ! AddItem(grass)
+      cartManager ! StartCheckOut
       expectMsg(CheckOutStarted(checkout))
     }
 
@@ -44,28 +42,28 @@ class CartAsyncSpec extends TestKit(ActorSystem("CartAsyncSpec"))
       import CartManager._
       setUp()
 
-      cart ! AddItem(grass)
-      cart ! RemoveItem(grass, 1)
-      customer.expectMsg(CartEmpty())
+      cartManager ! AddItem(grass)
+      cartManager ! RemoveItem(grass, 1)
+      customer.expectMsg(CartEmpty)
     }
 
     "inform about empty items when cart timer expired" in {
       import CartManager._
       setUp()
 
-      cart ! AddItem(grass)
-      cart ! CartTimerExpired()
-      customer.expectMsg(CartEmpty())
+      cartManager ! AddItem(grass)
+      cartManager ! CartTimerExpired
+      customer.expectMsg(CartEmpty)
     }
 
     "inform about empty items when checkout has closed" in {
       import CartManager._
       setUp()
 
-      cart ! AddItem(grass)
-      cart ! StartCheckOut()
-      cart ! CheckoutClosed()
-      customer.expectMsg(CartEmpty())
+      cartManager ! AddItem(grass)
+      cartManager ! StartCheckOut
+      cartManager ! CheckoutClosed
+      customer.expectMsg(CartEmpty)
     }
   }
 }
