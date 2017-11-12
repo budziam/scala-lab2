@@ -1,72 +1,163 @@
 package reactive2
 
-import akka.actor.{Actor, ActorRef, Props, Timers}
+import akka.actor.{ActorRef, Props, Timers}
 import akka.event.LoggingReceive
+import akka.persistence._
 
 import scala.concurrent.duration._
 
 object Checkout {
 
-  case class CheckoutStarted()
+  case object Cancelled
 
-  case class CheckoutTimerExpired()
+  case object CheckoutTimerExpired
 
-  case class DeliveryMethodSelected()
-
-  case class Cancelled()
-
-  case class CartTimerExpired()
-
-  case class PaymentSelected()
-
-  case class PaymentTimerExpired()
+  case object PaymentTimerExpired
 
   case class PaymentServiceStarted(paymentService: ActorRef)
 
-  case object CheckoutTimerKey
+  // States
+  sealed trait CheckoutState
 
-  case object PaymentTimerKey
+  case class SelectingDelivery(timestamp: Long) extends CheckoutState
+
+  case class SelectingPaymentMethod(timestamp: Long) extends CheckoutState
+
+  case class ProcessingPayment(timestamp: Long) extends CheckoutState
+
+  case object CheckoutCancelled extends CheckoutState
+
+  case object CheckoutClosed extends CheckoutState
+
+  // Events
+  sealed trait Event
+
+  case class PaymentSelected(method: String) extends Event
+
+  case class DeliveryMethodSelected(method: String) extends Event
+
+  private case class StateChanged(state: CheckoutState) extends Event
 
 }
 
-class Checkout(customer: ActorRef, cart: ActorRef) extends Actor with Timers {
+class Checkout(customer: ActorRef, cart: ActorRef, id: String) extends PersistentActor with Timers {
 
   import Checkout._
 
-  timers.startSingleTimer(CheckoutTimerKey, CheckoutTimerExpired, 5 second)
+  val checkoutTimeout: FiniteDuration = 60 seconds
+  val paymentTimeout: FiniteDuration = 60 seconds
 
-  def cancellCheckout(): Unit = {
-    cart ! CartManager.CheckoutCancelled
-    context.stop(self)
+  var paymentMethod = "default"
+  var deliveryMethod = "default"
+
+  override def persistenceId: String = id
+
+  startCheckoutTimer(System.currentTimeMillis(), checkoutTimeout)
+
+  def this(customer: ActorRef, cart: ActorRef) = {
+    this(customer, cart, "checkout-1")
+  }
+
+  private def startCheckoutTimer(timestamp: Long, time: FiniteDuration): Unit = {
+    timers.startSingleTimer("checkout-timer-" + timestamp, CheckoutTimerExpired, time)
+  }
+
+  private def startPaymentTimer(timestamp: Long, time: FiniteDuration): Unit = {
+    timers.startSingleTimer("payment-timer-" + timestamp, PaymentTimerExpired, time)
+  }
+
+  private def cancelTimers(): Unit = {
+    timers.cancelAll()
+  }
+
+  private def calculateElapsedTime(timestamp: Long): FiniteDuration = {
+    val now = System.currentTimeMillis()
+    Math.max((now - timestamp) / 1000.0, 0).seconds
+  }
+
+  private def updateState(event: Event): Unit = {
+    event match {
+      case DeliveryMethodSelected(method) => deliveryMethod = method
+      case PaymentSelected(method) => paymentMethod = method
+      case StateChanged(state) =>
+        state match {
+          case SelectingDelivery(timestamp) =>
+            cancelTimers()
+            startCheckoutTimer(timestamp, checkoutTimeout - calculateElapsedTime(timestamp))
+            context become selectingDelivery
+
+          case SelectingPaymentMethod(timestamp) =>
+            cancelTimers()
+            startCheckoutTimer(timestamp, checkoutTimeout - calculateElapsedTime(timestamp))
+            context become selectingPaymentMethod
+
+          case ProcessingPayment(timestamp) =>
+            cancelTimers()
+            startPaymentTimer(timestamp, paymentTimeout - calculateElapsedTime(timestamp))
+            context become processingPayment
+
+          case (CheckoutCancelled | CheckoutClosed) =>
+            context.stop(self)
+        }
+    }
   }
 
   def selectingDelivery: Receive = LoggingReceive {
-    case Cancelled() => cancellCheckout()
-    case CheckoutTimerExpired() => cancellCheckout()
-    case DeliveryMethodSelected() => context become selectingPaymentMethod
+    case (Cancelled | CheckoutTimerExpired) =>
+      persist(StateChanged(CheckoutCancelled)) { event =>
+        cart ! CartManager.CheckoutCancelled
+        updateState(event)
+      }
+
+    case DeliveryMethodSelected(method: String) =>
+      val now = System.currentTimeMillis()
+      persist(DeliveryMethodSelected(method)) { event =>
+        updateState(event)
+        persist(StateChanged(SelectingPaymentMethod(now))) { event =>
+          updateState(event)
+        }
+      }
+      context become selectingPaymentMethod
   }
 
   def selectingPaymentMethod: Receive = LoggingReceive {
-    case Cancelled() => cancellCheckout()
-    case CheckoutTimerExpired() => cancellCheckout()
-    case PaymentSelected() =>
-      timers.startSingleTimer(PaymentTimerKey, PaymentTimerExpired, 5 second)
+    case PaymentSelected(method) =>
+      val now = System.currentTimeMillis()
+      persist(PaymentSelected(method)) { event =>
+        updateState(event)
 
-      val paymentService = context.actorOf(Props(new PaymentService(self)), "paymentService")
-      customer ! PaymentServiceStarted(paymentService)
+        val paymentService = context.actorOf(Props(new PaymentService(self)), "payment-service")
+        persist(StateChanged(ProcessingPayment(now))) { event =>
+          updateState(event)
+          customer ! PaymentServiceStarted(paymentService)
+        }
+      }
 
-      context become processingPayment
+    case (Cancelled | CheckoutTimerExpired) =>
+      persist(StateChanged(CheckoutCancelled)) { event =>
+        cart ! CartManager.CheckoutCancelled
+        updateState(event)
+      }
   }
 
   def processingPayment: Receive = LoggingReceive {
-    case Cancelled() => cancellCheckout()
-    case PaymentTimerExpired() => cancellCheckout()
-
     case PaymentService.PaymentReceived() =>
-      customer ! CartManager.CheckoutClosed
-      cart ! CartManager.CheckoutClosed
-      context.stop(self)
+      persist(StateChanged(CheckoutClosed)) { event =>
+        customer ! CartManager.CheckoutClosed
+        cart ! CartManager.CheckoutClosed
+        updateState(event)
+      }
+
+    case (Cancelled | PaymentTimerExpired) =>
+      persist(StateChanged(CheckoutCancelled)) { event =>
+        cart ! CartManager.CheckoutCancelled
+        updateState(event)
+      }
   }
 
-  def receive: Receive = selectingDelivery
+  override def receiveCommand: Receive = selectingDelivery
+
+  override def receiveRecover: Receive = LoggingReceive {
+    case event: Event => updateState(event)
+  }
 }

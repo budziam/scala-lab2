@@ -27,8 +27,8 @@ class Customer extends Actor {
       cart ! CartManager.StartCheckOut
 
     case CartManager.CheckOutStarted(checkout) =>
-      checkout ! Checkout.DeliveryMethodSelected()
-      checkout ! Checkout.PaymentSelected()
+      checkout ! Checkout.DeliveryMethodSelected("abcd")
+      checkout ! Checkout.PaymentSelected("poiu")
 
     case Checkout.PaymentServiceStarted(paymentService) =>
       paymentService ! PaymentService.DoPayment()

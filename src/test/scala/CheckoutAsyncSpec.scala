@@ -20,8 +20,8 @@ class CheckoutAsyncSpec extends TestKit(ActorSystem("CheckoutAsyncSpec"))
       val cart = TestProbe()
       val checkout = cart.childActorOf(Props(new Checkout(customer, cart.ref)))
 
-      checkout ! DeliveryMethodSelected()
-      checkout ! PaymentSelected()
+      checkout ! DeliveryMethodSelected("testu")
+      checkout ! PaymentSelected("yuhu")
       checkout ! PaymentReceived()
       cart.expectMsg(CheckoutClosed)
     }
