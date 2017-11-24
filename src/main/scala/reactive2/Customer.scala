@@ -8,7 +8,7 @@ import reactive2.ProductCatalogMessages.BestMatches
 
 object Customer {
 
-  case class Init()
+  case class Purchase()
 
 }
 
@@ -16,7 +16,7 @@ class Customer extends Actor {
   private val catalog = context.system.actorSelection("akka.tcp://productCatalog@127.0.0.1:2553/user/productCatalog")
 
   def receive = LoggingReceive {
-    case Customer.Init() =>
+    case Customer.Purchase() =>
       val cartManager = context.actorOf(Props(new CartManager(self)), "cartManager")
 
       val grass = Item(URI.create("1"), "grass", 10, 1)
@@ -26,15 +26,15 @@ class Customer extends Actor {
       cartManager ! CartManager.AddItem(grass)
       cartManager ! CartManager.AddItem(soap)
       cartManager ! CartManager.AddItem(beer)
-    //      cartManager ! CartManager.RemoveItem(grass, 1)
-    //      cartManager ! CartManager.StartCheckOut
+      cartManager ! CartManager.RemoveItem(grass, 1)
+      cartManager ! CartManager.StartCheckOut
 
     case CartManager.CheckOutStarted(checkout) =>
       checkout ! Checkout.DeliveryMethodSelected("abcd")
       checkout ! Checkout.PaymentSelected("poiu")
 
     case Checkout.PaymentServiceStarted(paymentService) =>
-      paymentService ! PaymentService.DoPayment()
+      paymentService ! PaymentService.DoPayment("stripe")
 
     case CartManager.CartEmpty => println("[INFO] Oh no! Cart is empty")
     case CartManager.CheckoutClosed => println("[INFO] Oh no! Checkout is closed")
