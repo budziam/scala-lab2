@@ -70,7 +70,7 @@ class Checkout(customer: ActorRef, cart: ActorRef, id: String) extends Persisten
     timers.cancelAll()
   }
 
-  private def calculateElapsedTime(timestamp: Long): FiniteDuration = {
+  private def calculateTime(timestamp: Long): FiniteDuration = {
     val now = System.currentTimeMillis()
     Math.max((now - timestamp) / 1000.0, 0).seconds
   }
@@ -83,17 +83,17 @@ class Checkout(customer: ActorRef, cart: ActorRef, id: String) extends Persisten
         state match {
           case SelectingDelivery(timestamp) =>
             cancelTimers()
-            startCheckoutTimer(timestamp, checkoutTimeout - calculateElapsedTime(timestamp))
+            startCheckoutTimer(timestamp, checkoutTimeout - calculateTime(timestamp))
             context become selectingDelivery
 
           case SelectingPaymentMethod(timestamp) =>
             cancelTimers()
-            startCheckoutTimer(timestamp, checkoutTimeout - calculateElapsedTime(timestamp))
+            startCheckoutTimer(timestamp, checkoutTimeout - calculateTime(timestamp))
             context become selectingPaymentMethod
 
           case ProcessingPayment(timestamp) =>
             cancelTimers()
-            startPaymentTimer(timestamp, paymentTimeout - calculateElapsedTime(timestamp))
+            startPaymentTimer(timestamp, paymentTimeout - calculateTime(timestamp))
             context become processingPayment
 
           case (CheckoutCancelled | CheckoutClosed) =>

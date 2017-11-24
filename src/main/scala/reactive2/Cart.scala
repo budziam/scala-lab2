@@ -10,7 +10,7 @@ object Cart {
 
 case class Cart(items: Map[URI, Item]) {
   def addItem(item: Item): Cart = {
-    copy(items = items.updated(item.id, item.copy(count = getItemCount(item) + item.count)))
+    return copy(items = items.updated(item.id, item.copy(count = getItemCount(item) + item.count)))
   }
 
   def removeItem(item: Item, count: Int): Cart = {
