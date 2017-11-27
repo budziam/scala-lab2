@@ -14,10 +14,6 @@ object App extends App {
 
   val lines = scala.io.Source.fromFile("./query_result").getLines
 
-  catalogSystem.actorOf(
-    Props(new ProductCatalogManager(ProductCatalog(lines))),
-    "productCatalog"
-  )
-
-  shopActor ! BestMatches("pampers", 5)
+  catalogSystem.actorOf(Props(new ProductCatalogManager(ProductCatalog(lines))), "productCatalog")
+  shopActor ! BestMatches("beer", 5)
 }

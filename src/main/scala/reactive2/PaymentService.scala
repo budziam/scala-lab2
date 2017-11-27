@@ -25,24 +25,21 @@ object PaymentService {
 class PaymentService(checkout: ActorRef) extends Actor with ActorLogging {
 
   override val supervisorStrategy: OneForOneStrategy = OneForOneStrategy(loggingEnabled = false) {
-    case _: RepeatPaymentException =>
-      log.warning("REPEAT PAYMENT")
+    case _: PaymentRejectedException =>
+      log.warning("--- TRY AGAIN")
       Restart
     case e =>
       log.error("Unexpected failure: {}", e.getMessage)
       Stop
   }
 
-  var worker: ActorRef = _
-
   def receive = LoggingReceive {
     case PaymentService.DoPayment(paymentSystem: String) =>
-      worker = context.actorOf(Props(new PaymentWorker(paymentSystem, sender, checkout)))
-    //      context.stop(self)
+      context.actorOf(Props(new PaymentWorker(paymentSystem, sender, checkout)))
   }
 }
 
-class PaymentWorker(paymentSystem: String, sender: ActorRef, checkout: ActorRef) extends Actor {
+class PaymentWorker(paymentSystem: String, sender: ActorRef, checkout: ActorRef) extends Actor with ActorLogging {
 
   final implicit val materializer: ActorMaterializer = ActorMaterializer(ActorMaterializerSettings(context.system))
 
@@ -52,14 +49,15 @@ class PaymentWorker(paymentSystem: String, sender: ActorRef, checkout: ActorRef)
   val http = Http(context.system)
 
   override def preStart() = {
-    val uri = s"http://httpbin.org/anything/$paymentSystem"
+    //    val uri = s"http://httpbin.org/anything/$paymentSystem"
+    val uri = "http://httpbin.org/status/500"
+    log.info("--- REQUESTING")
     http.singleRequest(HttpRequest(uri = uri)).pipeTo(self)
   }
 
   def receive = {
     case resp@HttpResponse(StatusCodes.OK, headers, entity, _) =>
       entity.dataBytes.runFold(ByteString(""))(_ ++ _).foreach { body =>
-//        println("Got response, body: " + body.utf8String)
         resp.discardEntityBytes()
 
         sender ! PaymentConfirmed()
@@ -69,10 +67,9 @@ class PaymentWorker(paymentSystem: String, sender: ActorRef, checkout: ActorRef)
       }
 
     case resp@HttpResponse(code, _, _, _) =>
-//      println("Request failed, response code: " + code)
       resp.discardEntityBytes()
-      throw new RepeatPaymentException
-      shutdown()
+      log.info("--- PAYMENT REJECTED")
+      throw new PaymentRejectedException
 
   }
 
@@ -82,4 +79,4 @@ class PaymentWorker(paymentSystem: String, sender: ActorRef, checkout: ActorRef)
   }
 }
 
-class RepeatPaymentException extends Exception("Repeat")
+class PaymentRejectedException extends Exception("Repeat")
